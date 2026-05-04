@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>shrt</title>
+<style>
+body { margin:0; overflow:hidden; font-family:Arial,sans-serif; background:#000; }
+#game { width:100vw; height:100vh; position:relative; background:url("images/bg.png") center/cover no-repeat; }
+#frog,#hatch { position:absolute; width:150px; height:150px; transform:translate(-50%,-50%); z-index:20; cursor:pointer; }
+#hatch { z-index:5; }
+#snakePath { position:absolute; width:100%; height:100%; z-index:1; }
+.ball { position:absolute; width:64px; height:64px; transform:translate(-50%,-50%); z-index:10; pointer-events:auto; }
+#overlayQuestion,#overlayEnd,#overlayGameOver {
+    position:fixed; top:0; left:0; width:100%; height:100%;
+    background:rgba(0,0,0,0.65); display:none;
+    justify-content:center; align-items:center; flex-direction:column;
+    z-index:1000; color:#fff; text-align:center;
+}
+.closeBtn { position:absolute; right:30px; top:30px; font-size:30px; cursor:pointer; }
+.answerBtn {
+    background: rgba(255,255,255,0.15);
+    border: 2px solid green; padding:14px 25px;
+    margin:12px; font-size:20px; cursor:pointer;
+    border-radius:12px; width:60%;
+    transition: all 0.3s ease;
+}
+.answerBtn:hover { background: rgba(255,255,255,0.3); }
+    
+    #overlayQuestion h1 {
+    font-size: 50px;
+}
+.goldGlow { animation: gold 0.8s ease-out; }
+@keyframes gold {
+    0% { box-shadow: 0 0 5px gold, 0 0 10px gold inset; background:rgba(255,215,0,0.3); }
+    50% { box-shadow: 0 0 30px gold, 0 0 15px gold inset; background:rgba(255,215,0,0.6); }
+    100% { box-shadow: 0 0 5px gold, 0 0 10px gold inset; background:rgba(255,215,0,0.3); }
+}
+
+.shakeRed { animation: shake 0.6s ease; background: rgba(255,0,0,0.6); border-color:red; }
+@keyframes shake {
+    0% { transform:translateX(0); }
+    20% { transform:translateX(-8px); }
+    40% { transform:translateX(8px); }
+    60% { transform:translateX(-6px); }
+    80% { transform:translateX(6px); }
+    100% { transform:translateX(0); }
+}
+
+.particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  background: gold;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: drop-shadow(0 0 6px gold);
+  z-index: 1001;
+}
+
+#progressBar {
+    position:absolute; top:20px; left:50%; transform:translateX(-50%);
+    width:60%; height:30px; background: rgba(255,255,255,0.2);
+    border-radius:15px; overflow:hidden; z-index:50; box-shadow:0 0 10px #000;
+}
+#progressFill {
+    height:100%; width:0%; background:yellow; border-radius:15px;
+    box-shadow:0 0 15px gold; transition:width 0.3s;
+}
+.shotBall { position:absolute; width:50px; height:50px; border-radius:50%; z-index:15; }
+
+.firework {
+    position:fixed; width:4px; height:4px; background:gold;
+    border-radius:50%; pointer-events:none; z-index:2000;
+    filter:drop-shadow(0 0 6px gold);
+}
+.spark {
+    position:fixed; width:3px; height:3px; border-radius:50%;
+    background:rgb(255,230,150); pointer-events:none; z-index:2000;
+    filter:drop-shadow(0 0 4px gold);
+}
+</style>
+</head>
+
+<body>
+<div id="game"><canvas id="snakePath"></canvas></div>
+
+<div id="progressBar"><div id="progressFill"></div></div>
+
+<div id="overlayQuestion">
+    <div class="closeBtn" onclick="closeQuestion()">✖</div>
+    <h1 id="qText"></h1>
+    <div id="answers"></div>
+</div>
+
+<div id="overlayEnd"><h1 style="font-size:60px;">GREAT JOB!</h1></div>
+
+<div id="overlayGameOver">
+    <h1 style="font-size:60px;">GAME OVER</h1>
+    <h2>try again?</h2>
+    <button onclick="restartGame()" style="padding:20px 40px; font-size:30px; margin-top:10px;">RESTART</button>
+</div>
+
+<script>
+const IMG_FROG="images/hero.png";
+const IMG_HATCH="https://i.postimg.cc/dtYQxBqp/люк_зума_гп.png";
+const BALLS=[
+  "images/1.png",
+  "images/2.png",
+  "images/3.png",
+  "images/4.png",
+  "images/5.png",
+  "images/6.png"
+];
+
+let QUESTIONS=[
+ {q:"Вижу", c:"see", w:["saw","said"]},
+ {q:"Ходил", c:"went", w:["go","saw"]},
+ {q:"Хожу", c:"go", w:["went","had"]},
+ {q:"Было", c:"had", w:["have","see"]},
+ {q:"Есть", c:"have", w:["had","left"]},
+ {q:"Теряю", c:"lose", w:["lost","found"]},
+ {q:"Видел", c:"saw", w:["see","say"]},
+ {q:"Потерял", c:"lost", w:["lose","find"]},
+ {q:"Нашел", c:"found", w:["find","lose"]},
+ {q:"Нахожу", c:"find", w:["found","lost"]},
+ {q:"Оставил", c:"left", w:["leave","have"]},
+ {q:"Оставляю", c:"leave", w:["left","went"]},
+ {q:"Сказал", c:"said", w:["say","saw"]},
+ {q:"Говорю", c:"say", w:["said","saw"]},
+ {q:"Пришел", c:"came", w:["come","find"]}
+];
+let asked=0;
+
+const game=document.getElementById("game");
+let W=window.innerWidth, H=window.innerHeight;
+
+const frog=document.createElement("img");
+frog.src=IMG_FROG; frog.id="frog";
+frog.style.left=W/2+"px"; frog.style.top=H*0.85+"px";
+game.appendChild(frog);
+
+const hatch=document.createElement("img");
+hatch.src=IMG_HATCH; hatch.id="hatch";
+game.appendChild(hatch);
+
+const canvas=document.getElementById("snakePath");
+canvas.width=W; canvas.height=H;
+const ctx=canvas.getContext("2d");
+ctx.strokeStyle="rgba(255,255,255,0.2)";
+ctx.lineWidth=40; ctx.lineCap="round";
+
+function bezier(t,p0,p1,p2,p3){
+ return {
+   x:(1-t)**3*p0.x + 3*(1-t)**2*t*p1.x + 3*(1-t)*t**2*p2.x + t**3*p3.x,
+   y:(1-t)**3*p0.y + 3*(1-t)**2*t*p1.y + 3*(1-t)*t**2*p2.y + t**3*p3.y
+ };
+}
+
+let path=[];
+let hatchOffset = 80;
+let C1={x:W*0.05,y:H*0.2};
+let C2={x:W*0.35,y:H*0.05};
+let C3={x:W*0.65,y:H*0.45};
+let C4={x:W*0.98-hatchOffset,y:H*0.55};
+
+for(let t=0;t<=1;t+=0.0008) path.push(bezier(t,C1,C2,C3,C4));
+
+ctx.beginPath();
+ctx.moveTo(path[0].x,path[0].y);
+for(let p of path) ctx.lineTo(p.x,p.y);
+ctx.stroke();
+
+hatch.style.left=C4.x+"px";
+hatch.style.top=C4.y+"px";
+
+let snake=[], SNAKE_SIZE=25;
+const MIN_DIST=22;
+const SPEED=0.2;
+
+for(let i=0;i<SNAKE_SIZE;i++){
+  let img=BALLS[Math.floor(Math.random()*BALLS.length)];
+  snake.push({pos:-i*MIN_DIST, img:img, el:null});
+}
+
+snake.forEach(b=>{
+  let e=document.createElement("img");
+  e.src=b.img; e.className="ball";
+  game.appendChild(e); b.el=e;
+});
+
+
+let progress=0;
+function updateProgress(d){
+  progress=Math.min(100,Math.max(0,progress+d));
+  document.getElementById("progressFill").style.width=progress+"%";
+}
+
+let gameActive=true;
+
+function moveSnake(){
+  if(!gameActive) return;
+  for(let i=0;i<snake.length;i++){
+    if(i===0) snake[i].pos += SPEED;
+    else {
+      let target = snake[i-1].pos - MIN_DIST;
+      snake[i].pos += (target - snake[i].pos)*0.2;
+    }
+    if(snake[i].pos >= path.length-1){ gameOver(); return; }
+    let p = path[Math.floor(snake[i].pos)];
+    if(p){ snake[i].el.style.left=p.x+"px"; snake[i].el.style.top=p.y+"px"; }
+  }
+  requestAnimationFrame(moveSnake);
+}
+moveSnake();
+
+frog.onclick=()=>openQuestion();
+
+function openQuestion(){
+  if(!gameActive) return;
+  let q=QUESTIONS[asked]; if(!q) return;
+
+  overlayQuestion.style.display="flex";
+  qText.textContent=q.q;
+
+  let answers=[q.c,...q.w].sort(()=>Math.random()-0.5);
+  answersElem.innerHTML="";
+
+  answers.forEach(a=>{
+    let btn=document.createElement("div");
+    btn.className="answerBtn";
+    btn.textContent=a;
+    btn.onclick=()=>handleAnswer(a,q,btn);
+    answersElem.appendChild(btn);
+  });
+}
+
+function closeQuestion(){ overlayQuestion.style.display="none"; }
+
+const overlayQuestion=document.getElementById("overlayQuestion");
+const qText=document.getElementById("qText");
+const answersElem=document.getElementById("answers");
+
+function spawnParticles(btn){
+  const rect = btn.getBoundingClientRect();
+  const btnX = rect.left + rect.width/2;
+  const btnY = rect.top + rect.height/2;
+
+  for (let i=0; i<20; i++){
+    const p = document.createElement("div");
+    p.className = "particle";
+    document.body.appendChild(p);
+    p.style.left = btnX + "px";
+    p.style.top = btnY + "px";
+    const angle = Math.random()*2*Math.PI;
+    const speed = 2+Math.random()*3;
+    let vx = Math.cos(angle)*speed;
+    let vy = Math.sin(angle)*speed;
+    let life=0;
+    const anim=setInterval(()=>{
+      life++;
+      p.style.left = parseFloat(p.style.left)+vx+"px";
+      p.style.top  = parseFloat(p.style.top)+vy+"px";
+      vy += 0.05;
+      if(life>40){ clearInterval(anim); p.remove(); }
+    },16);
+  }
+}
+
+let currentTargetImg=null;
+let errors=0;
+const MAX_ERRORS=3;
+
+function handleAnswer(a,q,btn){
+  if(!gameActive) return;
+  currentTargetImg = BALLS[Math.floor(Math.random()*BALLS.length)];
+
+  if(a===q.c){
+    btn.classList.add("goldGlow");
+    spawnParticles(btn);
+    updateProgress(7);
+  } else {
+    btn.classList.add("shakeRed");
+    updateProgress(-10);
+    errors++;
+  }
+
+  setTimeout(()=>{
+    btn.classList.remove("goldGlow","shakeRed");
+    closeQuestion();
+    shoot(a!==q.c);
+    if(errors>=MAX_ERRORS){ gameOver(); return; }
+    asked++;
+    if(asked===QUESTIONS.length && snake.length>0) finishGame();
+  },800);
+}
+
+function shoot(miss=false){
+  if(!gameActive) return;
+  const ball=document.createElement("img");
+  ball.src=currentTargetImg;
+  ball.className="shotBall";
+  ball.style.left=W/2+"px"; 
+  ball.style.top=H*0.85+"px";
+  game.appendChild(ball);
+
+  let targetIndex = miss ? Math.floor(Math.random()*snake.length) : findMatch();
+  if(targetIndex===-1) targetIndex = snake.length-1;
+
+  let tx = snake[targetIndex].el.offsetLeft;
+  let ty = snake[targetIndex].el.offsetTop;
+
+  let frames=60, f=0;
+
+  let interval=setInterval(()=>{
+    f++;
+    let t=f/frames;
+    ball.style.left = (1-t)*(W/2) + t*tx + "px";
+    ball.style.top  = (1-t)*(H*0.85) + t*ty + "px";
+    if(f>=frames){
+      clearInterval(interval);
+      ball.remove();
+      if(!miss) collapse(targetIndex);
+      checkWin();
+    }
+  },16);
+}
+
+function findMatch(){
+  for(let i=0;i<snake.length;i++){
+    if(snake[i].img===currentTargetImg) return i;
+  }
+  return -1;
+}
+
+function collapse(idx){
+  let color = snake[idx].img;
+  let run=[idx];
+  for(let i=idx-1;i>=0;i--){ if(snake[i].img===color) run.push(i); else break; }
+  for(let i=idx+1;i<snake.length;i++){ if(snake[i].img===color) run.push(i); else break; }
+  run.sort((a,b)=>b-a);
+  run.forEach(i=>{ snake[i].el.remove(); snake.splice(i,1); });
+  for(let i=0;i<snake.length;i++){
+    if(i===0) continue;
+    let need = snake[i-1].pos - MIN_DIST;
+    snake[i].pos += (need - snake[i].pos)*0.4;
+  }
+}
+
+function checkWin(){ if(snake.length===0) finishGame(); }
+
+function gameOver(){
+  gameActive=false;
+  overlayQuestion.style.display="none";
+  document.getElementById("overlayGameOver").style.display="flex";
+  document.getElementById("overlayGameOver").style.background="rgba(0,0,0,0.7)";
+}
+
+function createFirework(){
+  let x = Math.random()*W;
+  let y = Math.random()*H*0.6;
+  for(let i=0;i<35;i++){
+    let p=document.createElement("div"); p.className="firework"; document.body.appendChild(p);
+    let angle=Math.random()*Math.PI*2; let speed=2+Math.random()*4;
+    let vx=Math.cos(angle)*speed, vy=Math.sin(angle)*speed, px=x, py=y, life=0;
+    let anim=setInterval(()=>{
+      life++; px+=vx; py+=vy; vy+=0.06;
+      p.style.left=px+"px"; p.style.top=py+"px";
+      if(life>50){ clearInterval(anim); p.remove(); }
+    },16);
+  }
+}
+
+function sparkle(){
+  let s=document.createElement("div");
+  s.className="spark";
+  s.style.left=(Math.random()*100)+"vw";
+  s.style.top=(Math.random()*100)+"vh";
+  document.body.appendChild(s);
+  setTimeout(()=>s.remove(),700);
+}
+
+function finishGame(){
+  gameActive=false;
+  document.getElementById("overlayEnd").style.display="flex";
+  for(let i=0;i<6;i++) setTimeout(()=>createFirework(),i*500);
+  for(let i=0;i<120;i++) setTimeout(()=>sparkle(),i*40);
+}
+
+function restartGame(){ location.reload(); }
+</script>
+</body>
+</html>
